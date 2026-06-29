@@ -8,8 +8,6 @@ namespace EventSoursingProject.Services
         private readonly IOperationReader _reader;
         private readonly IOperationWriter _writer;
         private readonly BalanceCalculator _calculator;
-
-        // Хранилище счетов в памяти
         private readonly Dictionary<Guid, Score> _scores = new();
 
         public CommandExecutor(
@@ -20,7 +18,6 @@ namespace EventSoursingProject.Services
             _reader = reader;
             _writer = writer;
             _calculator = calculator;
-
             LoadScoresFromOperations().Wait();
         }
 
@@ -34,16 +31,15 @@ namespace EventSoursingProject.Services
                 if (!_scores.ContainsKey(scoreId))
                 {
                     var ops = operations.Where(o => o.ScoreId == scoreId).ToList();
-                    var balance = _calculator.CalculateBalance(ops);
                     var lastSeq = ops.Any() ? ops.Max(o => o.Sequence) : 0;
 
                     _scores[scoreId] = new Score
                     {
                         ScoreId = scoreId,
                         ScoreName = $"Счет {scoreId.ToString().Substring(0, 8)}",
-                        OwnerId = Guid.Empty, 
+                        OwnerId = Guid.Empty,
                         LastEventSequence = lastSeq,
-                        UpdatedAt = ops.Any() ? ops.Max(o => o.CreatedAt) : DateTime.UtcNow
+                        UpdatedAt = ops.Any() ? ops.Max(o => o.CreatedAt) : DateTime.Now
                     };
                 }
             }
@@ -68,6 +64,7 @@ namespace EventSoursingProject.Services
                 "stats" => await GetStatsAsync(parts),
                 "scores" => await ListScoresAsync(),
                 "clear" => ClearConsole(),
+                "benchmark" or "bench" => await BenchmarkAsync(parts),
                 "exit" => "exit",
                 _ => $"❌ Неизвестная команда: '{command}'. Введите 'help' для справки."
             };
@@ -89,10 +86,10 @@ namespace EventSoursingProject.Services
 ║  stats <id>           - Показать статистику                 ║
 ║  scores               - Показать все счета                  ║
 ║  clear                - Очистить экран                      ║
+║  benchmark <count>    - Тест производительности             ║
 ║  help                 - Показать эту справку                ║
 ║  exit                 - Выйти из программы                  ║
-╚═══════════════════════════════════════════════════════════════╝
-";
+╚═══════════════════════════════════════════════════════════════╝";
         }
 
         private async Task<string> CreateScoreAsync(string[] parts)
@@ -109,7 +106,7 @@ namespace EventSoursingProject.Services
                 ScoreName = scoreName,
                 OwnerId = Guid.NewGuid(),
                 LastEventSequence = 0,
-                UpdatedAt = DateTime.UtcNow
+                UpdatedAt = DateTime.Now
             };
 
             _scores[scoreId] = score;
@@ -122,15 +119,12 @@ namespace EventSoursingProject.Services
                 Amount = 0,
                 ScoreId = scoreId,
                 Sequence = 1,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.Now
             };
 
             await _writer.AppendOperationAsync(operation);
 
-            return $"✅ Счет создан!\n" +
-                   $"   ID: {scoreId}\n" +
-                   $"   Название: {scoreName}\n" +
-                   $"   Баланс: 0.00 руб.";
+            return $"✅ Счет создан!\n   ID: {scoreId}\n   Название: {scoreName}\n   Баланс: 0.00 руб.";
         }
 
         private async Task<string> DepositAsync(string[] parts)
@@ -158,7 +152,7 @@ namespace EventSoursingProject.Services
                 Amount = amount,
                 ScoreId = scoreId,
                 Sequence = lastSeq + 1,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.Now
             };
 
             await _writer.AppendOperationAsync(operation);
@@ -168,8 +162,7 @@ namespace EventSoursingProject.Services
 
             var newBalance = _calculator.CalculateBalance(await _reader.GetOperationsByScoreAsync(scoreId));
 
-            return $"✅ Пополнение на {amount:F2} руб.\n" +
-                   $"   Новый баланс: {newBalance:F2} руб.";
+            return $"✅ Пополнение на {amount:F2} руб.\n   Новый баланс: {newBalance:F2} руб.";
         }
 
         private async Task<string> WithdrawAsync(string[] parts)
@@ -190,9 +183,7 @@ namespace EventSoursingProject.Services
             var currentBalance = _calculator.CalculateBalance(operations);
 
             if (currentBalance < amount)
-                return $"❌ Недостаточно средств!\n" +
-                       $"   Баланс: {currentBalance:F2} руб.\n" +
-                       $"   Запрошено: {amount:F2} руб.";
+                return $"❌ Недостаточно средств!\n   Баланс: {currentBalance:F2} руб.\n   Запрошено: {amount:F2} руб.";
 
             var lastSeq = operations.Any() ? operations.Max(o => o.Sequence) : 0;
 
@@ -204,7 +195,7 @@ namespace EventSoursingProject.Services
                 Amount = amount,
                 ScoreId = scoreId,
                 Sequence = lastSeq + 1,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.Now
             };
 
             await _writer.AppendOperationAsync(operation);
@@ -214,8 +205,7 @@ namespace EventSoursingProject.Services
 
             var newBalance = _calculator.CalculateBalance(await _reader.GetOperationsByScoreAsync(scoreId));
 
-            return $"✅ Списание {amount:F2} руб.\n" +
-                   $"   Новый баланс: {newBalance:F2} руб.";
+            return $"✅ Списание {amount:F2} руб.\n   Новый баланс: {newBalance:F2} руб.";
         }
 
         private async Task<string> GetBalanceAsync(string[] parts)
@@ -231,14 +221,9 @@ namespace EventSoursingProject.Services
 
             var operations = await _reader.GetOperationsByScoreAsync(scoreId);
             var balance = _calculator.CalculateBalance(operations);
-
             var score = _scores[scoreId];
 
-            return $"💰 Баланс счета '{score.ScoreName}':\n" +
-                   $"   ID: {scoreId}\n" +
-                   $"   Баланс: {balance:F2} руб.\n" +
-                   $"   Всего операций: {operations.Count}\n" +
-                   $"   Последнее обновление: {score.UpdatedAt:dd.MM.yyyy HH:mm:ss}";
+            return $"💰 Баланс счета '{score.ScoreName}':\n   ID: {scoreId}\n   Баланс: {balance:F2} руб.\n   Всего операций: {operations.Count}\n   Последнее обновление: {score.UpdatedAt:dd.MM.yyyy HH:mm:ss}";
         }
 
         private async Task<string> GetHistoryAsync(string[] parts)
@@ -336,6 +321,52 @@ ID: {scoreId}
         {
             Console.Clear();
             return "";
+        }
+
+        private async Task<string> BenchmarkAsync(string[] parts)
+        {
+            int count = 1000;
+            if (parts.Length > 1 && int.TryParse(parts[1], out var customCount))
+            {
+                count = customCount;
+            }
+
+            var scoreId = Guid.NewGuid();
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            await CreateScoreAsync(new[] { "create", "Bench" });
+
+            for (int i = 0; i < count; i++)
+            {
+                var op = new Operation
+                {
+                    OperationId = Guid.NewGuid(),
+                    OperationName = i % 2 == 0 ? "Deposit" : "Withdraw",
+                    OperationType = i % 2 == 0 ? OperationType.Credit : OperationType.Debit,
+                    Amount = 10,
+                    ScoreId = scoreId,
+                    Sequence = i + 2,
+                    CreatedAt = DateTime.Now
+                };
+                await _writer.AppendOperationAsync(op);
+            }
+            stopwatch.Stop();
+
+            var allOps = await _reader.GetOperationsByScoreAsync(scoreId);
+            var balance = _calculator.CalculateBalance(allOps);
+
+            var total = count + 1;
+            var rps = total / stopwatch.Elapsed.TotalSeconds;
+
+            return $@"
+╔════════════════════════════════════════╗
+║          ТЕСТ ПРОИЗВОДИТЕЛЬНОСТИ       ║
+╠════════════════════════════════════════╣
+║  Операций:   {total,6}                 ║
+║  Время:      {stopwatch.Elapsed.TotalSeconds:F2} сек           ║
+║  ⚡ RPS:      {rps,6:F0} оп/сек        ║
+║  Баланс:     {balance,6:F2} руб.       ║
+╚════════════════════════════════════════╝";
         }
     }
 }
